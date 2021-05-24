@@ -222,6 +222,12 @@ class PayslipBatches(models.Model):
             worksheet.write(row, column, all_col_nombre[vals], heading_format)
             column += 1
 
+        worksheet.write(row, column,'INFOP', heading_format)
+        column = column + 1
+        worksheet.write(row, column,'IHSS PATRONO', heading_format)
+        column = column + 1
+        worksheet.write(row, column,'RESERVA LABORAL', heading_format)
+
         row = 7
 
         #VARIABLES PARA LOS TOTALES
@@ -1086,17 +1092,26 @@ class PayslipBatches(models.Model):
             #CALCULO DEL RAP
             #OBTENER TECHO
             seguro_configu = self.env['model_configuraciones_nomina'].search([('tipo_activo', '=', True)])
+            
+            
+            
             #CREAR EL RAP
+            #BUSCA EL ESTIMADO DE COMISION INGRESADA Y HACE EL CALCULO PARTIENDO DE ESO
+            comision_suel_estima = self.env['comisiones_estimado'].search([('employee_id', '=', slip.employee_id.id),('tipo_activo', '=', True)])
+            
 
             #CREACION DEL SUELDO ACUMULADO QUINCENAL, FALTA VALIDAR LO DEL AÑO 
             rap_acumul_creacion = self.env['hr.employee.rap_acumulado'].search([('employee_id', '=', slip.employee_id.id),('fecha_sueldo', '=', self.date_end),('year_sueldo', '=', year_actual)])
             rap_data_sueldo_obj = self.env['hr.employee.rap_acumulado']   
 
             #FORMULA RAP SUELDO
-            to_rap = (tot_sueld - seguro_configu.techo_rap)
-            to_raa =  (to_rap * 0.015)
-            total_rap = float_round((to_raa/2), precision_digits=2)  
-          
+            # to_rap = (tot_sueld - seguro_configu.techo_rap)
+            # to_raa =  (to_rap * 0.015)
+            to_rap = (tot_sueld  + comision_suel_estima.monto_lps)
+            sum_rap_com = float(to_rap - seguro_configu.techo_rap)
+            to_raa =  (sum_rap_com * 0.015)
+            total_rap = float_round((to_raa), precision_digits=2)  
+            
             #CREO EL RAP QUINCENAL EN LA PESTANA DE ACUMULADOS DEL RAP
             if len(rap_acumul_creacion) > 0:
                     nada = 0.0
@@ -1543,7 +1558,7 @@ class PayslipBatches(models.Model):
                guardar_sueldo = (contrato_validacion.wage / 2)
             
 
-            #CREACION DEL SUELDO ACUMULADO QUINCENAL, FALTA VALIDAR LO DEL AÑO 
+            #CREACION DEL SUELDO ACUMULADO QUINCENAL
             sueldo_acumul_creacion = self.env['hr.employee.sueldos'].search([('employee_id', '=', slip.employee_id.id),('fecha_sueldo', '=', self.date_end),('year_sueldo', '=', year_actual)])
             data_sueldo_obj = self.env['hr.employee.sueldos']   
 
@@ -1553,7 +1568,7 @@ class PayslipBatches(models.Model):
                 else:    
                     data_sueldo_obj.create({
                                     'fecha_sueldo': self.date_end,
-                                    'monto_sueldo':guardar_sueldo,
+                                    'monto_sueldo': float(guardar_sueldo + to_ingre1),
                                     'aguinaldo_sueldo': False,
                                     'year_sueldo': year_actual,
                                     'mes_sueldo': month_actual,
@@ -1563,7 +1578,7 @@ class PayslipBatches(models.Model):
                 
             #SUELDO ACUMULADO DESDE QUE INGRESO A LABORAR
             acumulado_sueldos = self.env['hr.employee.sueldos'].search([('employee_id', '=', slip.employee_id.id)])
-            
+
             total_sueldo_acumulado = 0.0  
             total_restar = 0.0
             for sueldo_total in acumulado_sueldos:
@@ -1579,7 +1594,9 @@ class PayslipBatches(models.Model):
             # 100,000 * 1 = 100,000 ------ ex----220,000
             sueldo_restante_year = (contrato_validacion.wage * fecha_actual_sueldoacumulado)
 
-            #Suma total del sueldo acumulado + el sueldo restante    
+            #Suma total del sueldo acumulado + el sueldo restante  
+            estima_actuali = (comision_suel_estima.monto_lps * fecha_actual_sueldoacumulado)
+            sueldo_restante_year = float(sueldo_restante_year + estima_actuali)  
             
             if total_sueldo_acumulado > 0:
                 sueldo_final_anual = (total_sueldo_acumulado + sueldo_restante_year)
@@ -1651,12 +1668,14 @@ class PayslipBatches(models.Model):
             #
             #fecha_mess_ingreso = fecha_real_in.month
             if month_actual == fecha_real_in.month and fecha_real_in.day > 15 and year_actual == fecha_real_in.year:
-                to_descu1 = to_ihss
+                #to_descu1 = to_ihss
+                to_descu1 = sueldo_final_anual
             else:
-                to_descu1 = (to_ihss/2)
+                #to_descu1 = (to_ihss/2)
+                to_descu1 = sueldo_final_anual
             #Asignacion del calculo del RAP
             #total_rap
-            to_descu2 = total_rap
+            to_descu2 = to_rap_anual
             to_descu3 = 0.0
             to_descu4 = 0.0
             to_descu5 = 0.0
@@ -1837,6 +1856,20 @@ class PayslipBatches(models.Model):
             #total = 0.0
             va = 0.0
             to_to = 0.0
+            #INFOP-PATRONAL
+            infop_patro = float(tot_ingr * 0.01)
+            worksheet.write(row, 36, infop_patro, cell_number_format)
+            
+            #IHSS-PATRONO
+            ihss_patron = 872.7
+            worksheet.write(row, 37, ihss_patron, cell_number_format)
+            
+            # #Reserva Laboral
+            res_cal = float(tot_ingr + tot_sueld  - suelquincenall)
+            reserva_laboral = float(res_cal - 10021.28) * 0.015
+            worksheet.write(row, 38, reserva_laboral, cell_number_format)
+    
+
             for code in all_col_codigo:
                 per = slip.get_amount_from_rule_code(code)[0]
                 amt = (per/2)
@@ -1935,8 +1968,7 @@ class PayslipBatches(models.Model):
                                         va = float_round(to_to, precision_digits=2)
                                         worksheet.write(row, code_col, va, cell_number_format)
                                         code_col += 1
-                                
-            
+                
             row += 1
 
             #CAMBIO EN EL DETALLE DE NOMINA INDIVIDUAL
